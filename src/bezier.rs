@@ -1,4 +1,80 @@
 use nalgebra::{DMatrix, Matrix4, Vector2 as Vec2};
+use rayon::prelude::*;
+
+pub struct BezierCurve {
+    pub start: Vec2<f64>,
+    pub control1: Vec2<f64>,
+    pub control2: Vec2<f64>,
+    pub end: Vec2<f64>,
+}
+
+pub fn create_bezier_spline(points: &[Vec2<f64>], size: usize) -> Vec<BezierCurve> {
+    let mut spline_parts: Vec<_> = Vec::new();
+    let mut last_vec_i = 0;
+    let mut last_vec2 = points[0];
+
+    for i in 1..points.len() {
+        let vec2 = points[i];
+        if last_vec2.metric_distance(&vec2) > size as f64 {
+            let sub_points = points[last_vec_i..(i+1)].to_vec();
+            spline_parts.push(sub_points);
+            last_vec2 = vec2;
+            last_vec_i = i;
+        }
+    }
+
+    if spline_parts.is_empty() {
+        spline_parts.push(points.to_vec());
+    } else {
+        let sub_points = points[last_vec_i..].to_vec();
+        spline_parts.push(sub_points);
+    }
+
+    let mut spline: Vec<BezierCurve> = spline_parts.into_par_iter()
+        .map(|sub_points| fit_bezier_curve(&sub_points))
+        .collect();
+
+    if spline.len() > 1 {
+        smooth_spline(&mut spline);
+    }
+
+    spline
+}
+
+fn fit_bezier_curve(points: &[Vec2<f64>]) -> BezierCurve {
+    // This function will contain the least squares fitting logic from your original bezier.rs
+    // We'll modify it slightly to return a BezierCurve struct
+    let control_points = vec_to_bezier_control_points(points);
+    BezierCurve {
+        start: control_points[0],
+        control1: control_points[1],
+        control2: control_points[2],
+        end: control_points[3],
+    }
+}
+
+fn smooth_spline(spline: &mut Vec<BezierCurve>) {
+    if spline.len() <= 1 {
+        return;
+    }
+
+    // First pass: compute adjustments
+    let adjustments: Vec<_> = spline.windows(2)
+        .map(|window| {
+            let prev = &window[0];
+            let curr = &window[1];
+            let prev_tangent = prev.end - prev.control2;
+            (curr.start - prev.end, curr.start + prev_tangent - curr.control1)
+        })
+        .collect();
+
+    // Second pass: apply adjustments in parallel
+    spline.par_iter_mut().skip(1).zip(adjustments.par_iter())
+        .for_each(|(curve, &(start_adj, control1_adj))| {
+            curve.start += start_adj;
+            curve.control1 += control1_adj;
+        });
+}
 
 pub fn vec_to_bezier_control_points(points: &[Vec2<f64>]) -> [Vec2<f64>; 4] {
      return best_fit(points);

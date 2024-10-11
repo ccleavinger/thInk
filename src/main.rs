@@ -1,6 +1,6 @@
-// Copyright 2024 the Vello Authors
-// SPDX-License-Identifier: Apache-2.0 OR MIT
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use anyhow::{Ok, Result};
+use bezier::{create_bezier_spline, BezierCurve};
 use std::num::NonZeroUsize;
 use rand::Rng;
 use nalgebra::Vector2 as Vec2;
@@ -9,14 +9,14 @@ use vello::kurbo::{Affine, BezPath, Point, Stroke};
 use vello::peniko::Color;
 use vello::util::{RenderContext, RenderSurface};
 use vello::{AaConfig, Renderer, RendererOptions, Scene};
+use vello::wgpu;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::*;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::Window;
-mod bezier;
 
-use vello::wgpu;
+mod bezier;
 
 // Simple struct to hold the state of the renderer
 pub struct ActiveRenderState<'s> {
@@ -30,7 +30,8 @@ enum RenderState<'s> {
 }
 
 enum DrawFlag {
-    Curve(Vec2<f64>, Vec2<f64>, Vec2<f64>, Vec2<f64>, Color)
+    Curve(Vec2<f64>, Vec2<f64>, Vec2<f64>, Vec2<f64>, Color),
+    Spline(Vec<BezierCurve>, Color),
 }
 
 struct SimpleVelloApp<'s> {
@@ -41,7 +42,77 @@ struct SimpleVelloApp<'s> {
     draw_flags: Vec<DrawFlag>,
     points: Vec<Vec2<f64>>,
     is_drawing: bool,
-    current_id: u64
+    current_id: u64,
+    is_spline: bool,
+    frame_num: u64,
+}
+
+impl SimpleVelloApp<'_> {
+    fn update_spline(&mut self) {
+        let spline = create_bezier_spline(&self.points, 100);
+    
+        let draw_flag = if self.current_id < self.draw_flags.len() as u64 {
+            self.draw_flags.pop()
+        } else {
+            Option::None
+        };
+    
+        let color = match draw_flag {
+            Some(draw) => {
+                match draw {
+                    DrawFlag::Curve(_, _, _, _, color) => color,
+                    DrawFlag::Spline(_, color)  => color
+                }
+            },
+            None => {
+                let mut th_rand = rand::thread_rng();
+                Color::rgb8(
+                    th_rand.gen_range(5..255),
+                    th_rand.gen_range(5..255),
+                    th_rand.gen_range(5..255), 
+                )
+            }
+        };
+    
+            self.draw_flags.push(DrawFlag::Spline(spline, color));
+        }
+
+    fn update_curve(&mut self)  {
+        let bezier_points = bezier::vec_to_bezier_control_points(&self.points);
+
+        let draw_flag = if self.current_id < self.draw_flags.len() as u64 {
+            self.draw_flags.pop()
+        } else {
+            Option::None
+        };
+
+        let color = match draw_flag {
+            Some(draw) => {
+                match draw {
+                    DrawFlag::Curve(_, _, _, _, color) => color,
+                    DrawFlag::Spline(_, color)  => color
+                }
+            },
+            None => {
+                let mut th_rand = rand::thread_rng();
+                Color::rgb8(
+                    th_rand.gen_range(5..255),
+                    th_rand.gen_range(5..255),
+                    th_rand.gen_range(5..255), 
+                )
+            }
+        };
+
+        self.draw_flags.push(
+            DrawFlag::Curve(
+                bezier_points[0], 
+                bezier_points[1], 
+                bezier_points[2], 
+                bezier_points[3],
+                color
+            )
+        );
+    }
 }
 
 impl<'s> ApplicationHandler for SimpleVelloApp<'s> {
@@ -83,6 +154,7 @@ impl<'s> ApplicationHandler for SimpleVelloApp<'s> {
         window_id: winit::window::WindowId,
         event: WindowEvent,
     ) {
+        self.frame_num += 1;
         let render_state = match &mut self.state {
             RenderState::Active(state) if state.window.id() == window_id => state,
             _ => return,
@@ -119,27 +191,48 @@ impl<'s> ApplicationHandler for SimpleVelloApp<'s> {
                             point3,
                             color
                         ) => {
-                                let (start, pt1, pt2, pt3) = (
-                                    Point::new(point0.x, point0.y),
-                                    Point::new(point1.x, point1.y),
-                                    Point::new(point2.x, point2.y),
-                                    Point::new(point3.x, point3.y)
-                                );
+                            let (start, pt1, pt2, pt3) = (
+                                Point::new(point0.x, point0.y),
+                                Point::new(point1.x, point1.y),
+                                Point::new(point2.x, point2.y),
+                                Point::new(point3.x, point3.y)
+                            );
 
-                                let mut path = BezPath::new();
+                            let mut path = BezPath::new();
 
-                                path.move_to(Point::new(start.x, start.y));
-                                path.curve_to(pt1, pt2, pt3);
+                            path.move_to(Point::new(start.x, start.y));
+                            path.curve_to(pt1, pt2, pt3);
 
-                                self.scene.stroke(
-                                    &Stroke::new(2.0),
-                                    Affine::IDENTITY,
-                                        color,
-                                    None,
-                                    &path,
+                            self.scene.stroke(
+                                &Stroke::new(2.0),
+                                Affine::IDENTITY,
+                                color,
+                                None,
+                                &path,
+                            );
+                        }
+                        DrawFlag::Spline(curves, color) => {
+                            let mut path = BezPath::new();
+                            for (i, curve) in curves.iter().enumerate() {
+                                if i == 0 {
+                                    path.move_to(Point::new(curve.start.x, curve.start.y));
+                                }
+                                path.curve_to(
+                                    Point::new(curve.control1.x, curve.control1.y),
+                                    Point::new(curve.control2.x, curve.control2.y),
+                                    Point::new(curve.end.x, curve.end.y),
                                 );
                             }
+            
+                            self.scene.stroke(
+                                &Stroke::new(2.0),
+                                Affine::IDENTITY,
+                                *color,
+                                None,
+                                &path,
+                            );
                         }
+                    }
                 }
 
                 let surface = &render_state.surface;
@@ -185,47 +278,28 @@ impl<'s> ApplicationHandler for SimpleVelloApp<'s> {
                 self.is_drawing = false;
                 render_state.window.request_redraw();
                 self.current_id+=1;
+                print!("Current ID: {}\n", self.current_id);
             }
             WindowEvent::CursorMoved { position, .. } => {
                 let point = Point::new(position.x, position.y);
                 if self.is_drawing {
                     self.points.append(&mut vec![Vec2::new(point.x, point.y)]);
-                    if self.points.len() >= 3 {
-                        let bezier_points = bezier::vec_to_bezier_control_points(&self.points);
+                    let should_update = if self.is_spline {
+                        self.points.len() >= 8
+                    } else {
+                        self.points.len() >= 4
+                    };
 
-                        let draw_flag = if self.current_id < self.draw_flags.len() as u64 {
-                            self.draw_flags.pop()
-                        } else {
-                            Option::None
-                        };
-
-                        let color = match draw_flag {
-                            Some(draw) => {
-                                match draw {
-                                    DrawFlag::Curve(_, _, _, _, color) => color
-                                }
-                            },
-                            None => {
-                                let mut th_rand = rand::thread_rng();
-                                Color::rgb8(
-                                    th_rand.gen_range(5..255),
-                                    th_rand.gen_range(5..255),
-                                    th_rand.gen_range(5..255), 
-                                )
-                            }
-                        };
-
-                        self.draw_flags.push(
-                            DrawFlag::Curve(
-                                bezier_points[0], 
-                                bezier_points[1], 
-                                bezier_points[2], 
-                                bezier_points[3],
-                                color
-                            )
-                        );
-                        
+                    if should_update {
                         render_state.window.request_redraw();
+
+                        if self.is_spline {
+                            if self.frame_num % 5 == 0 {
+                                self.update_spline();
+                            }
+                        } else {
+                            self.update_curve();
+                        }
                     }
                 }
             }
@@ -243,7 +317,9 @@ fn main() -> Result<()> {
         points: Vec::new(),
         is_drawing: false,
         draw_flags: Vec::new(),
-        current_id: 0
+        current_id: 0,
+        is_spline: true,
+        frame_num: 0,
     };
 
     let event_loop = EventLoop::new()?;
