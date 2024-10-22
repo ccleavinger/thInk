@@ -1,7 +1,9 @@
 use nalgebra::Vector2 as Vec2;
 use rayon::prelude::*;
 
-use crate::bezier::{vec_to_bezier_control_points as fit_bezier_curve, BezierCurve};
+use bezier::{vec_to_bezier_control_points as fit_bezier_curve, BezierCurve};
+
+use super::bezier;
 
 pub fn create_bezier_spline(points: &[Vec2<f64>], size: usize) -> Vec<BezierCurve> {
     let mut spline_parts: Vec<_> = Vec::new();

@@ -2,14 +2,14 @@
 use anyhow::{Ok, Result};
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::RunSystemOnce;
-use bezier::BezierCurve;
-use spline::create_bezier_spline;
+use components::shapes::bezier::BezierCurve;
+use systems::update_spline::sys_update_spline;
 use std::num::NonZeroUsize;
 use std::time::Instant;
 use rand::Rng;
 use nalgebra::Vector2 as Vec2;
 use std::sync::Arc;
-use vello::kurbo::{Affine, BezPath, Point, RoundedRect, Stroke};
+use vello::kurbo::{Affine, BezPath, Point, Stroke};
 use vello::peniko::Color;
 use vello::util::{RenderContext, RenderSurface};
 use vello::{AaConfig, Renderer, RendererOptions, Scene};
@@ -20,8 +20,10 @@ use winit::event::*;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::Window;
 
-mod bezier;
-mod spline;
+
+
+mod components;
+mod systems;
 
 // Simple struct to hold the state of the renderer
 pub struct ActiveRenderState<'s> {
@@ -40,7 +42,7 @@ struct Spline { bez_spline: Vec<BezierCurve>, color: Color }
 #[derive(Component, Clone)]
 struct Points { points: Vec<Vec2<f64>> }
 
-struct SimpleVelloApp<'s> {
+struct ThinkApp<'s> {
     context: RenderContext,
     renderers: Vec<Option<Renderer>>,
     state: RenderState<'s>,
@@ -53,14 +55,7 @@ struct SimpleVelloApp<'s> {
 }
 
 
-// any entities that have a Points attached are in the process of being drawn/edited
-fn update_spline(mut query: Query<(&mut Spline, &mut Points)>) {
-    let (mut spline, points) = query.single_mut();
-    spline.bez_spline = create_bezier_spline(&points.points, 100);
-}
-
-
-impl<'s> ApplicationHandler for SimpleVelloApp<'s> {
+impl<'s> ApplicationHandler for ThinkApp<'s> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let RenderState::Suspended(cached_window) = &mut self.state else {
             return;
@@ -238,7 +233,7 @@ impl<'s> ApplicationHandler for SimpleVelloApp<'s> {
 
                         // decoupled logic for updating the spline
                         // should scale easier than the atrocity I had before
-                        self.world.run_system_once(update_spline);
+                        self.world.run_system_once(sys_update_spline);
 
                         render_state.window.request_redraw();
                     }
@@ -252,7 +247,7 @@ impl<'s> ApplicationHandler for SimpleVelloApp<'s> {
 }
 
 fn main() -> Result<()> {
-    let mut app = SimpleVelloApp {
+    let mut app = ThinkApp {
         context: RenderContext::new(),
         renderers: Vec::new(),
         state: RenderState::Suspended(None),
