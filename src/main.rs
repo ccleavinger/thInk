@@ -2,6 +2,7 @@
 use anyhow::{Ok, Result};
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::RunSystemOnce;
+use components::shapes::points::Points;
 use components::shapes::spline::Spline;
 use systems::update_spline::sys_update_spline;
 use std::num::NonZeroUsize;
@@ -19,26 +20,12 @@ use winit::dpi::LogicalSize;
 use winit::event::*;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::Window;
-
-
+use render::{ActiveRenderState, RenderState};
 
 mod components;
 mod systems;
 mod math;
-
-// Simple struct to hold the state of the renderer
-pub struct ActiveRenderState<'s> {
-    surface: RenderSurface<'s>,
-    window: Arc<Window>,
-}
-
-enum RenderState<'s> {
-    Active(ActiveRenderState<'s>),
-    Suspended(Option<Arc<Window>>),
-}
-
-#[derive(Component, Clone)]
-struct Points { points: Vec<Vec2<f64>> }
+mod render;
 
 struct ThinkApp<'s> {
     context: RenderContext,
